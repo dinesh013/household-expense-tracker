@@ -1,0 +1,47 @@
+# Household Expense Tracker: project context
+
+Mobile-first shared household expense tracker: React 19 + TS + Vite frontend talking **directly** to
+Supabase (anon key + RLS). There is no app server. Business rules live in Postgres.
+
+## Layout
+- `supabase/migrations/*.sql`: the whole backend, applied in filename order.
+  - `0001` tables · `0002` role helpers, validation trigger (`expenses_guard`), edit-history trigger
+  - `0003` `compute_settlement` (paise maths), `get_month_summary`, Owner-only close/reopen (Paid marks kept and
+    carried over on re-close), mark-paid, household + invite-link RPCs (`create_invite`, `get_invite`, `accept_invite`)
+  - `0004` RLS policies + column-scoped grants + EXECUTE grants. No scheduled job: only the Owner closes months.
+- `src/lib/`: `supabase.ts` client, `session.tsx` (auth + household context: `useApp()`), `useMonth.ts`
+  (month from `?m=YYYY-MM` + summary/expenses), `format.ts` (₹ en-IN formatting, amount parsing, client
+  validation, IST dates), `api.ts` (`must`/`rpc` + friendly errors), `types.ts`.
+- `src/pages/`: Dashboard, ExpenseForm (add/edit/history), Settlement, Login (password only, no email features),
+  Welcome (join via stored/pasted invite link, or create household), Join (`/join/:token`), `settings/` (Access, Categories, Profile).
+- `src/lib/invite.ts`: invite token parsing + localStorage hand-off from `/join/:token` through sign-up.
+- `tests/sql.test.mjs`: scenario tests on PGlite with `tests/supabase_stub.sql` (fake `auth` schema/roles).
+- `tests/fake-supabase.mjs`: dev-only fake Supabase (auth + PostgREST subset) over PGlite with seed data.
+
+## Rules
+- **After any change run:** `npm run typecheck && npm test && npm run test:sql && npm run build`. All must be green.
+- Any new table needs RLS enabled, policies, and explicit grants in a **new** migration file. Don't edit
+  applied migrations once a real project exists.
+- New client-callable functions must be `security definer set search_path = public`, check the caller's role
+  themselves, and be added to the `grant execute` list. Internal helpers stay revoked.
+- Money: integer paise in settlement JSON (`*_paise`), `numeric(12,2)` in tables. Format only via `format.ts`.
+- Month boundaries and "today" are always Asia/Kolkata (`ist_today()` in SQL, `istToday()` in TS).
+- Never put the service_role key in the frontend or `.env`. Only `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.
+
+## Dev
+- Real backend: `.env` from `.env.example`, then `npm run dev` (port 5174). Supabase "Confirm email" must be OFF.
+- Offline: `npm run fake-supabase` + `npm run dev:fake` (uses `.env.fake`). Seed users are in the fake server file.
+- The fake server supports only the PostgREST features the app uses (eq/gte/lt/is filters, order, one-level
+  embed, insert/update/delete, rpc). Extend it if you add new query shapes.
+
+## Product decisions (from the user, 2026-11-18)
+- The Owner (the user) is the only admin: invite links, roles, removal, categories, close/reopen are Owner-only.
+- Invites are links the Owner shares manually. No emails anywhere (no magic link, no confirmation, no invite email).
+- No month-end job. Months close only when the Owner clicks Close.
+- Reopening must not clear Paid marks.
+- Mark-as-paid is allowed for the payer, the receiver and the Owner (confirmed by the user).
+
+## Status (2026-11-18)
+- Verified offline: 31 SQL scenario tests, 9 unit tests, build, and a browser walkthrough on the fake backend
+  (link sign-up → join, reused link refused, link creation, mark paid → reopen → edit → re-close with carried mark).
+- **Not yet run against a real Supabase project.**
