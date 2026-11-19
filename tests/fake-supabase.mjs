@@ -171,6 +171,13 @@ function orderClause(order) {
   }).join(', ');
 }
 
+function limitClause(params) {
+  const n = (k) => (params.has(k) ? Number.parseInt(params.get(k), 10) : null);
+  const [limit, offset] = [n('limit'), n('offset')];
+  if ([limit, offset].some((v) => v !== null && !(v >= 0))) throw httpError(400, 'bad limit/offset');
+  return `${limit !== null ? ` limit ${limit}` : ''}${offset !== null ? ` offset ${offset}` : ''}`;
+}
+
 async function rest(req, user, url, body) {
   const path = url.pathname.replace(/^\/rest\/v1\//, '');
   const wantsObject = (req.headers.accept || '').includes('vnd.pgrst.object');
@@ -193,7 +200,7 @@ async function rest(req, user, url, body) {
   const values = [];
   let sql;
   if (req.method === 'GET') {
-    sql = `select ${await selectList(table, url.searchParams.get('select'))} from public.${ident(table)} t${whereClause(url.searchParams, values)}${orderClause(url.searchParams.get('order'))}`;
+    sql = `select ${await selectList(table, url.searchParams.get('select'))} from public.${ident(table)} t${whereClause(url.searchParams, values)}${orderClause(url.searchParams.get('order'))}${limitClause(url.searchParams)}`;
   } else if (req.method === 'POST') {
     const rows = Array.isArray(body) ? body : [body];
     const cols = Object.keys(rows[0]);

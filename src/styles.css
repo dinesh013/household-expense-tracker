@@ -265,6 +265,13 @@ textarea.input { min-height: 80px; resize: vertical; }
 .timeline li { border-left: 2px solid var(--border); padding-left: 12px; font-size: 0.88rem; }
 .timeline .when { font-size: 0.75rem; color: var(--muted); }
 
+/* ---------- Activity log ---------- */
+.activity-row { align-items: flex-start; }
+.activity-line { overflow-wrap: anywhere; }
+.change-list { list-style: none; margin: 2px 0 0; padding: 0; font-size: 0.8rem; overflow-wrap: anywhere; }
+.struck { text-decoration: line-through; color: var(--muted); }
+div.expense-row:hover { background: transparent; }
+
 /* ---------- Auth ---------- */
 .auth-wrap { min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; }
 .auth-card { width: 100%; max-width: 400px; display: grid; gap: 18px; }

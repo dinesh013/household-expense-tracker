@@ -16,7 +16,7 @@ final settlement is frozen and the month's expenses are locked.
 | **Add expenses** | One expense, or several in one save (**Add another expense**, up to 20). Each new row copies the previous row's category, date and payer. Blank extra rows are skipped; if any row is invalid nothing is saved. Owner and Members. |
 | **Edit expense** | Amount, description, category, date, paid by, optional note. Shows **Logged by** and **Paid by** separately, plus the edit history. Read-only for Viewers and closed months. |
 | **Settlement** (`/settlement`) | Who pays whom, a per-person breakdown, **Mark as paid** (with date), and Owner-only **Close** / **Reopen**. |
-| **Settings** | **Access** (create/share invite links, set roles, remove, pending links), **Categories** (Owner adds, renames, reorders and deletes), **Profile** (name, household name, sign out, leave). |
+| **Settings** | **Access** (create/share invite links, set roles, remove, pending links), **Categories** (Owner adds, renames, reorders and deletes), **Activity** (audit log: who added, edited or deleted which expense and when, with the amount and date; filter by person and type; everyone in the household can see it), **Profile** (name, household name, sign out, leave). |
 
 ## Set up Supabase (one time)
 
@@ -28,6 +28,7 @@ final settlement is frozen and the month's expenses are locked.
    supabase/migrations/20261118000003_settlement_rpc.sql
    supabase/migrations/20261118000004_rls.sql
    supabase/migrations/20261119000005_category_order_delete.sql
+   supabase/migrations/20261119000006_activity_log.sql
    ```
 3. **Authentication → Sign In / Providers → Email:** keep Email enabled and switch **"Confirm email" off**. The app
    doesn't use email at all (no magic links, no confirmations), so with confirmation on, new people couldn't
@@ -66,8 +67,8 @@ unsigned, so never expose this server.
 
 ```bash
 npm test              # unit tests: ₹ formatting, amount parsing, validation, IST month maths
-npm run test:sql      # 36 scenario tests against the real migrations: RLS, roles, validation,
-                      # settlement maths, close/lock/reopen, kept Paid marks, invite links
+npm run test:sql      # 40 scenario tests against the real migrations: RLS, roles, validation,
+                      # settlement maths, close/lock/reopen, kept Paid marks, invite links, activity log
 npm run typecheck
 npm run build
 ```
@@ -112,7 +113,9 @@ new figure differs, the app shows what is still to pay or what should be returne
 - Validation happens in both places. The client gives instant feedback, and the database re-checks with
   constraints and triggers: amount > 0 and ≤ ₹1 crore, description required, no future dates, category must
   belong to the household, payer must be an active Owner/Member, and closed months are locked.
-- Internal functions (`compute_settlement`, `close_month_internal`) are not callable by clients.
+- Internal functions (`compute_settlement`, `close_month_internal`, `expense_snapshot`) are not callable by clients.
+- The activity log (`expense_history`) is written only by a database trigger. Clients can read their household's
+  log but can't insert, change or delete entries, so it can't be edited after the fact.
 
 ## Design decisions and assumptions
 
@@ -124,6 +127,9 @@ new figure differs, the app shows what is still to pay or what should be returne
 - **Deleting a category** moves its expenses to a category the Owner picks (each move shows in that expense's edit
   history). It is refused while any of those expenses is in a closed month, so a final settlement never changes; reopen
   the month first or rename the category instead. The last category can't be deleted.
+- **Activity log** lives under Settings and is visible to every member, Viewers included, so the household can see
+  who logged what. It records adds, edits and deletes of expenses. Each entry keeps a snapshot of the expense at that
+  moment (amount, date, category, payer, note), so a deleted expense still shows what was removed.
 - **Role changes apply to open months.** Promoting a Viewer to Member includes them in the current month's
   split. Closed months keep their frozen snapshot.
 - **Removed members** are soft-removed. They lose access straight away but stay in the split for months they

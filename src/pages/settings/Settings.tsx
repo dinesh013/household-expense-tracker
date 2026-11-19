@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 const tabs = [
   { to: 'access', label: 'Access' },
   { to: 'categories', label: 'Categories' },
+  { to: 'activity', label: 'Activity' },
   { to: 'profile', label: 'Profile' },
 ];
 

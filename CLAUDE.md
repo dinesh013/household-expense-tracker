@@ -10,12 +10,14 @@ Supabase (anon key + RLS). There is no app server. Business rules live in Postgr
     carried over on re-close), mark-paid, household + invite-link RPCs (`create_invite`, `get_invite`, `accept_invite`)
   - `0004` RLS policies + column-scoped grants + EXECUTE grants. No scheduled job: only the Owner closes months.
   - `0005` Owner-only `reorder_categories`, `delete_category` (moves expenses, refused for closed months), `category_usage`.
+  - `0006` activity log: `expense_history` keeps entries after an expense is deleted (FK dropped), adds `deleted`
+    entries, a `snapshot` of the expense per entry and a `seq` identity for exact order (sort by `seq`, not `changed_at`).
 - `src/lib/`: `supabase.ts` client, `session.tsx` (auth + household context: `useApp()`), `useMonth.ts`
   (month from `?m=YYYY-MM` + summary/expenses), `format.ts` (₹ en-IN formatting, amount parsing, client
   validation, IST dates), `api.ts` (`must`/`rpc` + friendly errors), `types.ts`.
 - `src/pages/`: Dashboard, AddExpenses (`/expenses/new`, one or several rows in one insert; helpers in `lib/expenseRows.ts`),
-  ExpenseForm (edit/history), Settlement, Login (password only, no email features),
-  Welcome (join via stored/pasted invite link, or create household), Join (`/join/:token`), `settings/` (Access, Categories, Profile).
+  ExpenseForm (edit/history), Settlement, `settings/Activity` (audit log, pages by `seq`; helpers in `lib/activity.ts`), Login (password only, no email features),
+  Welcome (join via stored/pasted invite link, or create household), Join (`/join/:token`), `settings/` (Access, Categories, Activity, Profile).
 - `src/lib/invite.ts`: invite token parsing + localStorage hand-off from `/join/:token` through sign-up.
 - `tests/sql.test.mjs`: scenario tests on PGlite with `tests/supabase_stub.sql` (fake `auth` schema/roles).
 - `tests/fake-supabase.mjs`: dev-only fake Supabase (auth + PostgREST subset) over PGlite with seed data.
@@ -44,15 +46,17 @@ Supabase (anon key + RLS). There is no app server. Business rules live in Postgr
 - Mark-as-paid is allowed for the payer, the receiver and the Owner (confirmed by the user).
 - (2026-11-19) Adding several expenses at once: Owner and Members. Reorder/delete categories: Owner only.
   Deleting a used category moves its expenses to one the Owner picks; refused while any is in a closed month.
+- (2026-11-19) Activity log (who added/edited/deleted which expense, when, how much, for which date) under
+  Settings → Activity, readable by everyone in the household (Viewers too).
 
 ## Status (2026-11-18)
-- Verified offline: 36 SQL scenario tests, 21 unit tests, build, and a browser walkthrough on the fake backend
+- Verified offline: 40 SQL scenario tests, 25 unit tests, build, and a browser walkthrough on the fake backend
   (link sign-up → join, reused link refused, link creation, mark paid → reopen → edit → re-close with carried mark).
 
 ## Status (2026-11-19): live
 - Running on a real Supabase project, hosted on Vercel. Vercel auto-deploys every push to `main`
   (GitHub `dinesh013/household-expense-tracker`). Env vars `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are set in Vercel.
-- The migrations are applied to the real project: **never edit `0001`–`0004`**. Schema changes go in a new
+- The migrations are applied to the real project: **never edit `0001`–`0005`** (0005 applied 2026-11-19). `0006` (activity log) must be run in the SQL Editor before its frontend is pushed. Schema changes go in a new
   migration file, run in the Supabase SQL Editor **before** pushing frontend code that depends on it.
 - Vercel Hobby only deploys commits whose author email it can match to `dinesh013`. If a deploy shows
   "Blocked", check the commit email (`git log -1 --format=%ae`) is linked to that GitHub account.

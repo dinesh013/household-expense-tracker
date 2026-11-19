@@ -469,5 +469,55 @@ await check('several expenses in one insert: all saved, or none if one is invali
   eq(logged.n, 2, 'logged_by set on every row');
 });
 
+console.log('\nActivity log');
+const log = async (expenseId) => (await db.query(
+  'select action, changed_by, changes, snapshot from public.expense_history where expense_id = $1 order by seq', [expenseId])).rows;
+
+await check('adding, editing and deleting are all logged, with who and a snapshot', async () => {
+  await as(arun);
+  const exp = (await insertExpense('120.00', 'Bread', arun.id, today, { note: 'bakery' })).rows[0];
+  await db.query("update public.expenses set amount = 150 where id = $1", [exp.id]);
+  await db.query('delete from public.expenses where id = $1', [exp.id]);
+  const rows = await log(exp.id);
+  eq(rows.map((r) => r.action), ['created', 'updated', 'deleted'], 'three entries, kept after the delete');
+  assert(rows.every((r) => r.changed_by === arun.id), 'each entry names who did it');
+  eq(rows[0].snapshot, { amount: 120, description: 'Bread', category_id: catId, expense_date: today, paid_by: arun.id, note: 'bakery' }, 'added snapshot');
+  eq(rows[1].snapshot.amount, 150, 'edit snapshot has the new amount');
+  eq(rows[1].changes.amount, { from: 120, to: 150 }, 'edit changes');
+  eq(rows[2].snapshot.amount, 150, 'delete snapshot has what was deleted');
+});
+
+await check('the log is readable by every member, not outsiders, and nobody can write it', async () => {
+  await as(vik);
+  assert((await one('select count(*)::int as n from public.expense_history where household_id = $1', [hid])).n > 0, 'viewer reads the log');
+  await expectError(() => db.query("insert into public.expense_history (expense_id, household_id, action) values (gen_random_uuid(), $1, 'deleted')", [hid]), /permission denied/);
+  await as(arun);
+  await expectError(() => db.query('delete from public.expense_history where household_id = $1', [hid]), /permission denied/);
+  await expectError(() => db.query("update public.expense_history set changed_by = null where household_id = $1", [hid]), /permission denied/);
+  await as(outsider);
+  eq((await one('select count(*)::int as n from public.expense_history where household_id = $1', [hid])).n, 0, 'outsider sees nothing');
+});
+
+await check('a refused delete (closed month) leaves no log entry', async () => {
+  await as(arun);
+  const locked = await one('select id from public.expenses where household_id = $1 and public.is_month_locked(household_id, expense_date) limit 1', [hid]);
+  assert(locked, 'an expense in a closed month exists');
+  await expectError(() => db.query('delete from public.expenses where id = $1', [locked.id]), /closed/i);
+  assert(!(await log(locked.id)).some((r) => r.action === 'deleted'), 'no deleted entry');
+});
+
+await check('migration backfills snapshots of older entries as they were at the time', async () => {
+  await as(arun);
+  const exp = (await insertExpense('300.00', 'Gas refill', arun.id, today)).rows[0];
+  await db.query('update public.expenses set amount = 320 where id = $1', [exp.id]);
+  await db.query("update public.expenses set description = 'Gas cylinder' where id = $1", [exp.id]);
+  const expected = (await log(exp.id)).map((r) => r.snapshot);
+  eq(expected.map((s) => [s.amount, s.description]), [[300, 'Gas refill'], [320, 'Gas refill'], [320, 'Gas cylinder']], 'trigger snapshots');
+  await service();
+  await db.query('update public.expense_history set snapshot = null where expense_id = $1', [exp.id]);
+  await db.exec(readFileSync(join(migDir, '20261119000006_activity_log.sql'), 'utf8')); // re-runnable
+  eq((await log(exp.id)).map((r) => r.snapshot), expected, 'backfilled snapshots match');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -54,7 +54,7 @@ export default function ExpenseForm() {
         if (!e) { setError('This expense no longer exists.'); return; }
         const exp = e as Expense;
         const [h, isLocked] = await Promise.all([
-          must(supabase.from('expense_history').select('id, action, changed_by, changed_at, changes').eq('expense_id', id).order('changed_at', { ascending: false })),
+          must(supabase.from('expense_history').select('id, action, changed_by, changed_at, changes').eq('expense_id', id).order('seq', { ascending: false })),
           rpc<boolean>('is_month_locked', { p_household: exp.household_id, p_date: exp.expense_date }),
         ]);
         setOriginal(exp);

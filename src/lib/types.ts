@@ -43,10 +43,27 @@ export interface Expense {
 
 export interface HistoryEntry {
   id: string;
-  action: 'created' | 'updated';
+  action: 'created' | 'updated' | 'deleted';
   changed_by: string | null;
   changed_at: string;
   changes: Record<string, { from: unknown; to: unknown }>;
+}
+
+/** The expense as it was right after a log entry (for a delete: as it was when deleted). */
+export interface ExpenseSnapshot {
+  amount: number | string;
+  description: string;
+  category_id: string;
+  expense_date: string;
+  paid_by: string;
+  note: string | null;
+}
+
+/** One row of the household activity log (an expense added, edited or deleted). */
+export interface ActivityEntry extends HistoryEntry {
+  seq: number;
+  expense_id: string;
+  snapshot: ExpenseSnapshot | null;
 }
 
 export interface Person {

@@ -15,6 +15,7 @@ import Settings from './pages/settings/Settings';
 import Access from './pages/settings/Access';
 import Categories from './pages/settings/Categories';
 import ProfileSettings from './pages/settings/Profile';
+import Activity from './pages/settings/Activity';
 
 export default function App() {
   const { loading, session, household, error, refresh } = useApp();
@@ -64,6 +65,7 @@ export default function App() {
           <Route index element={<Navigate to="access" replace />} />
           <Route path="access" element={<Access />} />
           <Route path="categories" element={<Categories />} />
+          <Route path="activity" element={<Activity />} />
           <Route path="profile" element={<ProfileSettings />} />
         </Route>
       </Route>
