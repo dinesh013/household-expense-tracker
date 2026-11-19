@@ -399,5 +399,75 @@ await check('later joiners are never added to earlier months', async () => {
   assert((await rpc('get_month_summary', hid, ty, tm)).people.some((p) => p.user_id === late.id), 'newcomer in current month');
 });
 
+console.log('\nCategory order & delete, several expenses at once');
+const catOrder = async () => (await db.query('select id from public.categories where household_id = $1 order by sort_order, name', [hid])).rows.map((r) => r.id);
+const usage = async () => Object.fromEntries((await db.query('select * from public.category_usage($1)', [hid])).rows.map((r) => [r.category_id, r]));
+
+await check('only the owner reorders categories, and only with the full list', async () => {
+  await as(arun);
+  const ids = await catOrder();
+  await as(vik);
+  await expectError(() => rpc('reorder_categories', hid, [...ids].reverse()), /Only the Owner/);
+  await as(arun);
+  await expectError(() => rpc('reorder_categories', hid, ids.slice(1)), /category list changed/);
+  await expectError(() => rpc('reorder_categories', hid, [ids[0], ...ids.slice(0, -1)]), /category list changed/);
+  await rpc('reorder_categories', hid, [...ids].reverse());
+  eq(await catOrder(), [...ids].reverse(), 'new order saved');
+  await as(outsider);
+  await expectError(() => rpc('reorder_categories', hid, ids), /Only the Owner/);
+});
+
+await check('category usage counts expenses and closed-month ones', async () => {
+  await as(arun);
+  const u = await usage();
+  eq(Object.keys(u).length, (await catOrder()).length, 'one row per category');
+  assert(u[catId].expense_count > 0, 'Groceries is used');
+  await as(outsider);
+  eq((await db.query('select * from public.category_usage($1)', [hid])).rows.length, 0, 'outsider sees nothing');
+});
+
+await check('delete moves expenses to the chosen category, with history', async () => {
+  await as(arun);
+  const temp = (await one("insert into public.categories (household_id, name, sort_order) values ($1, 'Temp', 99) returning id", [hid])).id;
+  const unused = (await one("insert into public.categories (household_id, name, sort_order) values ($1, 'Unused', 100) returning id", [hid])).id;
+  const exp = (await insertExpense('75.00', 'Temp thing', arun.id, today, { category: temp })).rows[0];
+  await as(vik);
+  await expectError(() => rpc('delete_category', temp, catId), /Only the Owner/);
+  await as(arun);
+  await expectError(() => rpc('delete_category', temp, null), /Choose another category/);
+  await expectError(() => rpc('delete_category', temp, temp), /Choose another category/);
+  await rpc('delete_category', temp, catId);
+  eq((await one('select category_id from public.expenses where id = $1', [exp.id])).category_id, catId, 'expense moved');
+  const h = await one("select changed_by, changes from public.expense_history where expense_id = $1 and action = 'updated'", [exp.id]);
+  eq(h.changes.category_id, { from: temp, to: catId }, 'move recorded in history');
+  eq(h.changed_by, arun.id, 'recorded as the owner');
+  assert(!(await catOrder()).includes(temp), 'category gone');
+  await rpc('delete_category', unused, null);
+  assert(!(await catOrder()).includes(unused), 'unused category deleted without a target');
+});
+
+await check('delete is refused while any of its expenses is in a closed month', async () => {
+  await as(arun);
+  const locked = Object.values(await usage()).find((r) => r.locked_count > 0);
+  assert(locked, 'a closed month with expenses exists');
+  const other = (await catOrder()).find((id) => id !== locked.category_id);
+  await expectError(() => rpc('delete_category', locked.category_id, other), /closed months/);
+  assert((await catOrder()).includes(locked.category_id), 'still there');
+});
+
+await check('several expenses in one insert: all saved, or none if one is invalid', async () => {
+  await as(arun);
+  const before = (await one('select count(*)::int as n from public.expenses where household_id = $1', [hid])).n;
+  const multi = (rows) => db.query(
+    `insert into public.expenses (household_id, amount, description, category_id, expense_date, paid_by)
+     select $1, (r->>'amount')::numeric, r->>'description', $2, (r->>'date')::date, $3 from jsonb_array_elements($4::jsonb) r`,
+    [hid, catId, arun.id, JSON.stringify(rows)]);
+  await multi([{ amount: '10', description: 'Milk', date: today }, { amount: '20', description: 'Bread', date: today }]);
+  await expectError(() => multi([{ amount: '30', description: 'Eggs', date: today }, { amount: '40', description: 'Future', date: tomorrow }]), /future/i);
+  eq((await one('select count(*)::int as n from public.expenses where household_id = $1', [hid])).n, before + 2, 'only the valid batch saved');
+  const logged = await one("select count(*)::int as n from public.expenses where description in ('Milk','Bread') and logged_by = $1", [arun.id]);
+  eq(logged.n, 2, 'logged_by set on every row');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

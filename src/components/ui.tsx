@@ -21,6 +21,9 @@ export const Icon = {
   monitor: svg(<><rect x="2" y="4" width="20" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></>),
   arrow: svg(<path d="M5 12h14m-6-6 6 6-6 6" />),
   lock: svg(<><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>),
+  up: svg(<path d="m18 15-6-6-6 6" />),
+  down: svg(<path d="m6 9 6 6 6-6" />),
+  close: svg(<path d="M18 6 6 18M6 6l12 12" />),
 };
 
 export const Spinner = () => <div className="spinner" role="status" aria-label="Loading" />;

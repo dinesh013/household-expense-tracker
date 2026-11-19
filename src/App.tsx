@@ -9,6 +9,7 @@ import Welcome from './pages/Welcome';
 import Join from './pages/Join';
 import Dashboard from './pages/Dashboard';
 import ExpenseForm from './pages/ExpenseForm';
+import AddExpenses from './pages/AddExpenses';
 import Settlement from './pages/Settlement';
 import Settings from './pages/settings/Settings';
 import Access from './pages/settings/Access';
@@ -56,7 +57,7 @@ export default function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
-        <Route path="expenses/new" element={<ExpenseForm />} />
+        <Route path="expenses/new" element={<AddExpenses />} />
         <Route path="expenses/:id" element={<ExpenseForm />} />
         <Route path="settlement" element={<Settlement />} />
         <Route path="settings" element={<Settings />}>

@@ -13,9 +13,10 @@ final settlement is frozen and the month's expenses are locked.
 | Screen | What it does |
 | --- | --- |
 | **Dashboard** (`/`) | Month selector, total spent, each person's paid/share/balance, interim (or final) settlement, category donut, and an expense list grouped by day with search and person/category filters. Floating **Add expense** button. |
-| **Add / Edit expense** | Amount, description, category, date, paid by, optional note. Shows **Logged by** and **Paid by** separately, plus the edit history. Read-only for Viewers and closed months. |
+| **Add expenses** | One expense, or several in one save (**Add another expense**, up to 20). Each new row copies the previous row's category, date and payer. Blank extra rows are skipped; if any row is invalid nothing is saved. Owner and Members. |
+| **Edit expense** | Amount, description, category, date, paid by, optional note. Shows **Logged by** and **Paid by** separately, plus the edit history. Read-only for Viewers and closed months. |
 | **Settlement** (`/settlement`) | Who pays whom, a per-person breakdown, **Mark as paid** (with date), and Owner-only **Close** / **Reopen**. |
-| **Settings** | **Access** (create/share invite links, set roles, remove, pending links), **Categories** (Owner adds or renames), **Profile** (name, household name, sign out, leave). |
+| **Settings** | **Access** (create/share invite links, set roles, remove, pending links), **Categories** (Owner adds, renames, reorders and deletes), **Profile** (name, household name, sign out, leave). |
 
 ## Set up Supabase (one time)
 
@@ -26,6 +27,7 @@ final settlement is frozen and the month's expenses are locked.
    supabase/migrations/20261118000002_helpers_triggers.sql
    supabase/migrations/20261118000003_settlement_rpc.sql
    supabase/migrations/20261118000004_rls.sql
+   supabase/migrations/20261119000005_category_order_delete.sql
    ```
 3. **Authentication → Sign In / Providers → Email:** keep Email enabled and switch **"Confirm email" off**. The app
    doesn't use email at all (no magic links, no confirmations), so with confirmation on, new people couldn't
@@ -64,7 +66,7 @@ unsigned, so never expose this server.
 
 ```bash
 npm test              # unit tests: ₹ formatting, amount parsing, validation, IST month maths
-npm run test:sql      # 31 scenario tests against the real migrations: RLS, roles, validation,
+npm run test:sql      # 36 scenario tests against the real migrations: RLS, roles, validation,
                       # settlement maths, close/lock/reopen, kept Paid marks, invite links
 npm run typecheck
 npm run build
@@ -99,7 +101,7 @@ new figure differs, the app shows what is still to pay or what should be returne
 
 - RLS is enabled on **every** table. Members read only their household's data. Expense writes need the Owner
   or Member role.
-- **Owner-only (admin) actions:** create/cancel invite links, change roles, remove people, add/rename categories,
+- **Owner-only (admin) actions:** create/cancel invite links, change roles, remove people, add/rename/reorder/delete categories,
   rename the household, and close/reopen months. Each goes through a `security definer` RPC or an RLS policy
   that checks the caller is the Owner, so the database itself enforces it, not just the UI.
 - Invite links carry a 64-hex-character random token. They work **once**, expire after **7 days**, and can be
@@ -119,6 +121,9 @@ new figure differs, the app shows what is still to pay or what should be returne
 - **Invites are links you share yourself.** No emails are sent. The person opens the link, creates an account
   (or signs in) and taps **Join**. They can also paste the link on the welcome screen.
 - **Marking a payment as paid** can be done by the payer, the receiver or the Owner.
+- **Deleting a category** moves its expenses to a category the Owner picks (each move shows in that expense's edit
+  history). It is refused while any of those expenses is in a closed month, so a final settlement never changes; reopen
+  the month first or rename the category instead. The last category can't be deleted.
 - **Role changes apply to open months.** Promoting a Viewer to Member includes them in the current month's
   split. Closed months keep their frozen snapshot.
 - **Removed members** are soft-removed. They lose access straight away but stay in the split for months they

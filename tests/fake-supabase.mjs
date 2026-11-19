@@ -180,7 +180,8 @@ async function rest(req, user, url, body) {
     const fn = path.slice(4);
     ident(fn);
     const args = Object.entries(body || {});
-    const values = args.map(([, v]) => (v !== null && typeof v === 'object' ? JSON.stringify(v) : v));
+    // Arrays go as Postgres arrays (e.g. uuid[]); other objects as JSON.
+    const values = args.map(([, v]) => (Array.isArray(v) ? v : v !== null && typeof v === 'object' ? JSON.stringify(v) : v));
     const call = `public.${ident(fn)}(${args.map(([k], i) => `${ident(k)} => $${i + 1}`).join(', ')})`;
     if (setOf.has(fn)) return { status: 200, json: (await asUser(user, () => db.query(`select * from ${call}`, values))).rows };
     const r = (await asUser(user, () => db.query(`select ${call} as r`, values))).rows[0].r;

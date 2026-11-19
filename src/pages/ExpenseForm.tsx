@@ -7,7 +7,7 @@ import { compareMonths, currentMonth, dateTimeLabel, formatRupees, istToday, mon
 import type { Expense, HistoryEntry } from '../lib/types';
 import { Icon, Spinner, useToast } from '../components/ui';
 
-const LAST_CATEGORY_KEY = 'het-last-category';
+import { LAST_CATEGORY_KEY } from '../lib/expenseRows';
 
 export default function ExpenseForm() {
   const { id } = useParams();

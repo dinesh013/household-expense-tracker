@@ -9,10 +9,12 @@ Supabase (anon key + RLS). There is no app server. Business rules live in Postgr
   - `0003` `compute_settlement` (paise maths), `get_month_summary`, Owner-only close/reopen (Paid marks kept and
     carried over on re-close), mark-paid, household + invite-link RPCs (`create_invite`, `get_invite`, `accept_invite`)
   - `0004` RLS policies + column-scoped grants + EXECUTE grants. No scheduled job: only the Owner closes months.
+  - `0005` Owner-only `reorder_categories`, `delete_category` (moves expenses, refused for closed months), `category_usage`.
 - `src/lib/`: `supabase.ts` client, `session.tsx` (auth + household context: `useApp()`), `useMonth.ts`
   (month from `?m=YYYY-MM` + summary/expenses), `format.ts` (₹ en-IN formatting, amount parsing, client
   validation, IST dates), `api.ts` (`must`/`rpc` + friendly errors), `types.ts`.
-- `src/pages/`: Dashboard, ExpenseForm (add/edit/history), Settlement, Login (password only, no email features),
+- `src/pages/`: Dashboard, AddExpenses (`/expenses/new`, one or several rows in one insert; helpers in `lib/expenseRows.ts`),
+  ExpenseForm (edit/history), Settlement, Login (password only, no email features),
   Welcome (join via stored/pasted invite link, or create household), Join (`/join/:token`), `settings/` (Access, Categories, Profile).
 - `src/lib/invite.ts`: invite token parsing + localStorage hand-off from `/join/:token` through sign-up.
 - `tests/sql.test.mjs`: scenario tests on PGlite with `tests/supabase_stub.sql` (fake `auth` schema/roles).
@@ -40,9 +42,11 @@ Supabase (anon key + RLS). There is no app server. Business rules live in Postgr
 - No month-end job. Months close only when the Owner clicks Close.
 - Reopening must not clear Paid marks.
 - Mark-as-paid is allowed for the payer, the receiver and the Owner (confirmed by the user).
+- (2026-11-19) Adding several expenses at once: Owner and Members. Reorder/delete categories: Owner only.
+  Deleting a used category moves its expenses to one the Owner picks; refused while any is in a closed month.
 
 ## Status (2026-11-18)
-- Verified offline: 31 SQL scenario tests, 9 unit tests, build, and a browser walkthrough on the fake backend
+- Verified offline: 36 SQL scenario tests, 21 unit tests, build, and a browser walkthrough on the fake backend
   (link sign-up → join, reused link refused, link creation, mark paid → reopen → edit → re-close with carried mark).
 
 ## Status (2026-11-19): live

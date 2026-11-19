@@ -276,3 +276,21 @@ textarea.input { min-height: 80px; resize: vertical; }
 
 dialog.sheet { border: none; border-radius: var(--radius); padding: 20px; background: var(--surface); color: var(--text); width: min(420px, calc(100vw - 32px)); }
 dialog.sheet::backdrop { background: rgb(0 0 0 / 0.45); }
+
+/* Categories: Owner controls and the inline delete panel */
+.cat-item + .cat-item { border-top: 1px solid var(--border); }
+.cat-item .list-item { border-top: none; }
+.cat-actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.icon-btn.sm { width: 32px; height: 32px; }
+.icon-btn.sm svg { width: 18px; height: 18px; }
+.icon-btn:disabled { opacity: 0.35; cursor: default; background: transparent; }
+.delete-panel { margin: 0 0 12px 22px; padding: 12px; border-radius: 12px; background: var(--surface-2); gap: 10px; }
+
+/* Add expenses: several rows in one save */
+.amount-input.compact .input { font-size: 1.15rem; min-height: 46px; padding-left: 30px; }
+.amount-input.compact span { font-size: 1.1rem; left: 12px; }
+/* Fields focused by keyboard or on error scroll clear of the sticky Save bar. */
+.form-grid .input { scroll-margin-bottom: 160px; }
+.add-footer { position: sticky; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 5; display: grid; gap: 10px; box-shadow: 0 -6px 20px rgb(0 0 0 / 0.12); }
+@media (min-width: 720px) { .add-footer { bottom: 12px; } }
+.btn.block svg { width: 18px; height: 18px; }
