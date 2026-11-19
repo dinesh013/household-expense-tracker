@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApp } from '../lib/session';
+import { hasUnknownPeople, payerFilterOptions } from '../lib/members';
 import { useMonthData, useSelectedMonth } from '../lib/useMonth';
 import { dayLabel, formatPaise, istToday, monthKey, monthLabel, toPaise } from '../lib/format';
 import type { Expense, MonthSummary, Payment } from '../lib/types';
@@ -12,6 +13,14 @@ export default function Dashboard() {
   const app = useApp();
   const ym = useSelectedMonth();
   const { summary, expenses, loading, error } = useMonthData(app.household!.id, ym);
+  const { members, revalidate } = app;
+
+  // Pick up people who joined since the list was loaded: on every visit, and straight away when an
+  // expense names someone the list doesn't have yet.
+  useEffect(() => { revalidate(); }, [revalidate]);
+  useEffect(() => {
+    if (hasUnknownPeople(members, expenses)) revalidate();
+  }, [members, expenses, revalidate]);
 
   const locked = summary?.status === 'closed';
   const newHref = summary && !summary.is_current ? `/expenses/new?date=${lastDayOf(ym)}` : '/expenses/new';
@@ -29,9 +38,13 @@ export default function Dashboard() {
         </>
       )}
       {app.canWrite && !locked && summary && (
-        <Link className="fab" to={newHref}>
-          {Icon.plus}<span>Add expense</span>
-        </Link>
+        <>
+          {/* Room to scroll the last expense clear of the floating button. */}
+          <div className="fab-spacer" aria-hidden="true" />
+          <Link className="fab" to={newHref}>
+            {Icon.plus}<span>Add expense</span>
+          </Link>
+        </>
       )}
     </>
   );
@@ -124,10 +137,7 @@ function ExpenseList({ expenses, monthName, isCurrent, canAdd }: { expenses: Exp
 
   const catIndex = useMemo(() => new Map(categories.map((c, i) => [c.id, i])), [categories]);
   const catName = (id: string) => categories.find((c) => c.id === id)?.name ?? 'Other';
-  const payers = useMemo(() => {
-    const ids = new Set(expenses.map((e) => e.paid_by));
-    return members.filter((m, i, a) => ids.has(m.user_id) && a.findIndex((x) => x.user_id === m.user_id) === i);
-  }, [expenses, members]);
+  const payers = useMemo(() => payerFilterOptions(members, expenses), [expenses, members]);
 
   const filtered = expenses.filter((e) =>
     (!person || e.paid_by === person) &&

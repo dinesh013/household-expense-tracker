@@ -1,8 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { must } from './api';
 import type { Category, Household, Member, Profile, Role } from './types';
+import { isStale } from './members';
 
 interface AppState {
   loading: boolean;
@@ -17,6 +18,8 @@ interface AppState {
   isOwner: boolean;
   nameOf: (userId: string | null | undefined) => string;
   refresh: () => Promise<void>;
+  /** Reloads household, people and categories unless they were loaded in the last few seconds. */
+  revalidate: () => void;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -37,6 +40,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<Role | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const loadedAt = useRef(0);
+  const inFlight = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -49,7 +54,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const userId = session?.user.id ?? null;
 
-  const refresh = useCallback(async () => {
+  const load = useCallback(async () => {
     if (!userId) {
       setProfile(null);
       setHousehold(null);
@@ -87,12 +92,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setRole((mine as { role: Role }).role);
       setMembers(ms as unknown as Member[]);
       setCategories(cs as Category[]);
+      loadedAt.current = Date.now();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
   }, [userId]);
+
+  // An explicit refresh (after joining, a role change…) always loads, so it never returns an older result.
+  const refresh = useCallback(() => {
+    const p = load().finally(() => { if (inFlight.current === p) inFlight.current = null; });
+    inFlight.current = p;
+    return p;
+  }, [load]);
+
+  // The people list must stay current: someone can join while this tab is open (or the app sits on a
+  // phone's home screen for days), and "Paid by", the filters and Access all read from it. Background
+  // checks skip if a load is already running or the data is only a few seconds old.
+  const revalidate = useCallback(() => {
+    if (userId && !inFlight.current && isStale(loadedAt.current, Date.now())) void refresh();
+  }, [userId, refresh]);
+
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') revalidate(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', revalidate);
+    window.addEventListener('online', revalidate);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', revalidate);
+      window.removeEventListener('online', revalidate);
+    };
+  }, [revalidate]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -114,14 +146,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       categories,
       canWrite: role === 'owner' || role === 'member',
       isOwner: role === 'owner',
-      nameOf: (id) => (id ? names.get(id) ?? 'Former member' : 'Scheduled job'),
+      nameOf: (id) => (id ? names.get(id) ?? 'Former member' : 'Unknown'),
       refresh,
+      revalidate,
     };
-  }, [authReady, loading, error, session, profile, household, role, members, categories, refresh]);
+  }, [authReady, loading, error, session, profile, household, role, members, categories, refresh, revalidate]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-/** Owner/Member rows that are currently active — the people who can be "Paid by". */
-export const activePayers = (members: Member[]) =>
-  members.filter((m) => !m.removed_at && (m.role === 'owner' || m.role === 'member'));
+export { activePayers } from './members';

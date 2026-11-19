@@ -8,7 +8,7 @@ import { ROLE_LABEL, type Invite, type Member, type Role } from '../../lib/types
 import { Avatar, useToast } from '../../components/ui';
 
 export default function Access() {
-  const { household, members, isOwner, profile, refresh } = useApp();
+  const { household, members, isOwner, profile, refresh, revalidate } = useApp();
   const toast = useToast();
   const [invites, setInvites] = useState<Invite[]>([]);
   const [label, setLabel] = useState('');
@@ -28,7 +28,10 @@ export default function Access() {
     setInvites(rows as Invite[]);
   }, [isOwner, household]);
 
-  useEffect(() => { loadInvites().catch((e) => setError(errorText(e))); }, [loadInvites]);
+  // Someone may have joined through a link since the app loaded: reload the people, and reload the
+  // pending links whenever the people change so a used link disappears.
+  useEffect(() => { revalidate(); }, [revalidate]);
+  useEffect(() => { loadInvites().catch((e) => setError(errorText(e))); }, [loadInvites, members.length]);
 
   async function run(action: () => Promise<unknown>, done: string): Promise<boolean> {
     setBusy(true);

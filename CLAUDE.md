@@ -44,4 +44,11 @@ Supabase (anon key + RLS). There is no app server. Business rules live in Postgr
 ## Status (2026-11-18)
 - Verified offline: 31 SQL scenario tests, 9 unit tests, build, and a browser walkthrough on the fake backend
   (link sign-up → join, reused link refused, link creation, mark paid → reopen → edit → re-close with carried mark).
-- **Not yet run against a real Supabase project.**
+
+## Status (2026-11-19): live
+- Running on a real Supabase project, hosted on Vercel. Vercel auto-deploys every push to `main`
+  (GitHub `dinesh013/household-expense-tracker`). Env vars `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are set in Vercel.
+- The migrations are applied to the real project: **never edit `0001`–`0004`**. Schema changes go in a new
+  migration file, run in the Supabase SQL Editor **before** pushing frontend code that depends on it.
+- Vercel Hobby only deploys commits whose author email it can match to `dinesh013`. If a deploy shows
+  "Blocked", check the commit email (`git log -1 --format=%ae`) is linked to that GitHub account.

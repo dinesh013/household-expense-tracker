@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useApp } from '../lib/session';
 import { useMonthData, useSelectedMonth } from '../lib/useMonth';
 import { errorText, rpc } from '../lib/api';
@@ -9,12 +9,13 @@ import { MonthSwitcher, Spinner, StatusBadge, useToast } from '../components/ui'
 import { TransferLine } from '../components/charts';
 
 export default function Settlement() {
-  const { household, isOwner, nameOf } = useApp();
+  const { household, isOwner, nameOf, revalidate } = useApp();
   const ym = useSelectedMonth();
   const { summary, loading, error, reload } = useMonthData(household!.id, ym, false);
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  useEffect(() => { revalidate(); }, [revalidate]);
 
   async function ownerAction(fn: 'close_month' | 'reopen_month') {
     const label = monthLabel(ym);

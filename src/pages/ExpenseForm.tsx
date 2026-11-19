@@ -14,7 +14,7 @@ export default function ExpenseForm() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
-  const { household, profile, members, categories, canWrite, nameOf } = useApp();
+  const { household, profile, members, categories, canWrite, nameOf, revalidate } = useApp();
   const today = istToday();
 
   const [loading, setLoading] = useState(Boolean(id));
@@ -42,6 +42,9 @@ export default function ExpenseForm() {
     setForm((f) => ({ ...f, [k]: v }));
     setErrors((e) => ({ ...e, [k]: undefined }));
   };
+
+  // Make sure someone who joined since the app loaded is offered under "Paid by".
+  useEffect(() => { revalidate(); }, [revalidate]);
 
   useEffect(() => {
     if (!id) return;
