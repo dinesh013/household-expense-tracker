@@ -38,8 +38,8 @@ export function CategoryDonut({ slices }: { slices: Slice[] }) {
           <li key={s.label}>
             <span className="swatch" style={{ background: s.colour }} aria-hidden="true" />
             <span className="lname">{s.label}</span>
-            <span className="num">{formatPaise(s.paise)}</span>
-            <span className="tiny muted num" style={{ width: 36, textAlign: 'right' }}>{total ? Math.round((s.paise / total) * 100) : 0}%</span>
+            <span className="num lamount">{formatPaise(s.paise)}</span>
+            <span className="tiny muted num lpct">{total ? Math.round((s.paise / total) * 100) : 0}%</span>
           </li>
         ))}
       </ul>

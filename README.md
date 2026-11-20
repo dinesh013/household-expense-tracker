@@ -12,11 +12,11 @@ final settlement is frozen and the month's expenses are locked.
 
 | Screen | What it does |
 | --- | --- |
-| **Dashboard** (`/`) | Month selector, total spent, each person's paid/share/balance, interim (or final) settlement, category donut, and an expense list grouped by day with search and person/category filters. Floating **Add expense** button. |
+| **Dashboard** (`/`) | Month selector, total spent, each person's paid/share/balance, interim (or final) settlement, category donut, **AI Insight** (optional, see below), and an expense list grouped by day with search and person/category filters. Floating **Add expense** button. The Owner sees a banner when change requests are waiting. |
 | **Add expenses** | One expense, or several in one save (**Add another expense**, up to 20). Each new row copies the previous row's category, date and payer. Blank extra rows are skipped; if any row is invalid nothing is saved. Owner and Members. |
-| **Edit expense** | Amount, description, category, date, paid by, optional note. Shows **Logged by** and **Paid by** separately, plus the edit history. Read-only for Viewers and closed months. |
+| **Expense** (`/expenses/:id`) | Amount, description, category, date, paid by, optional note. Shows **Logged by** and **Paid by** separately, plus the edit history. **Only the Owner edits or deletes.** Members see it read-only with **Request a change** (correct the fields + reason) and **Request deletion**; the Owner approves or rejects right there. Read-only for Viewers and closed months. |
 | **Settlement** (`/settlement`) | Who pays whom, a per-person breakdown, **Mark as paid** (with date), and Owner-only **Close** / **Reopen**. |
-| **Settings** | **Access** (create/share invite links, set roles, remove, pending links), **Categories** (Owner adds, renames, reorders and deletes), **Activity** (audit log: who added, edited or deleted which expense and when, with the amount and date; filter by person and type; everyone in the household can see it), **Profile** (name, household name, sign out, leave). |
+| **Settings** | **Access** (create/share invite links, set roles, remove, pending links), **Categories** (Owner adds, renames, reorders and deletes), **Activity** (change requests waiting for the Owner and recent decisions, then the audit log: who added, edited or deleted which expense and when, with the amount and date; filter by person and type; everyone in the household can see it), **Profile** (name, household name, sign out, leave). |
 
 ## Set up Supabase (one time)
 
@@ -29,6 +29,8 @@ final settlement is frozen and the month's expenses are locked.
    supabase/migrations/20261118000004_rls.sql
    supabase/migrations/20261119000005_category_order_delete.sql
    supabase/migrations/20261119000006_activity_log.sql
+   supabase/migrations/20261120000007_change_requests.sql
+   supabase/migrations/20261120000008_ai_insights.sql
    ```
 3. **Authentication → Sign In / Providers → Email:** keep Email enabled and switch **"Confirm email" off**. The app
    doesn't use email at all (no magic links, no confirmations), so with confirmation on, new people couldn't
@@ -66,10 +68,12 @@ unsigned, so never expose this server.
 ## Tests
 
 ```bash
-npm test              # unit tests: ₹ formatting, amount parsing, validation, IST month maths
-npm run test:sql      # 40 scenario tests against the real migrations: RLS, roles, validation,
-                      # settlement maths, close/lock/reopen, kept Paid marks, invite links, activity log
-npm run typecheck
+npm test              # unit tests: ₹ formatting, amount parsing, validation, IST month maths,
+                      # change requests, AI Insight logic (with a fake Claude client, no API calls)
+npm run test:sql      # 46 scenario tests against the real migrations: RLS, roles, validation,
+                      # settlement maths, close/lock/reopen, kept Paid marks, invite links, activity log,
+                      # Members add-only + change requests, AI Insight daily limit
+npm run typecheck     # the app and the Edge Function
 npm run build
 ```
 
@@ -98,11 +102,46 @@ month. The Owner can **reopen** a month to fix something and **close** it again 
 kept**: on re-close each mark is matched to the same payer → receiver pair with the amount actually paid. If the
 new figure differs, the app shows what is still to pay or what should be returned.
 
+## AI Insight (optional)
+
+The **✨ AI Insight** card on the dashboard names the category you overspend on most this month, gives 2–3 short
+tips, and ends with a light-hearted line comparing you with a typical Velachery (Chennai) household. A Supabase
+Edge Function (`supabase/functions/ai-insight`) calls Claude (`claude-opus-5-5`, low effort) with live web search
+for current Chennai figures. Until it is set up, the card says *"AI Insight isn't switched on yet"*.
+
+- **Who:** anyone in the household, up to **5 a day per household** (IST), enforced in the database. The latest
+  insight for the month is shown to everyone.
+- **What is sent:** this month's and the last 3 months' category totals, the month, and how many people share
+  them. No names, emails, descriptions or notes.
+- **Cost:** pay-as-you-go on your Anthropic account, roughly US$0.05–0.15 per insight with web search
+  (an estimate: check your usage page after the first few). Set a monthly spend limit in the Anthropic Console.
+- If the model declines a request, server-side fallback (`fallbacks: "default"`) retries it on another model.
+
+To switch it on:
+
+1. Run migrations `0007` and `0008` (above) if you haven't.
+2. Create an API key at <https://console.anthropic.com> (Settings → API keys) and set a spend limit.
+3. Supabase Dashboard → **Edge Functions → Secrets**: add `ANTHROPIC_API_KEY`. Optionally add `ALLOWED_ORIGIN`
+   with your Vercel URL (e.g. `https://your-app.vercel.app`) to accept calls only from the app.
+4. Deploy the function from the project folder (needs the Supabase CLI login once):
+   ```bash
+   npx supabase login
+   npx supabase functions deploy ai-insight --project-ref <your-project-ref>
+   ```
+   The project ref is the `xxxx` in `https://xxxx.supabase.co`. Never put the API key in `.env` or the frontend.
+
 ## Security
 
 - RLS is enabled on **every** table. Members read only their household's data. Expense writes need the Owner
   or Member role.
+- **Members add, never edit or delete.** Editing and deleting expenses is Owner-only in RLS, so a Member's direct
+  API call changes nothing. Members raise a change request instead; only the Owner can approve (which applies it,
+  through the same validation and closed-month lock) or reject it (with a reason).
+- **AI Insight** runs with the caller's own login, so it reads only data RLS allows. The API key lives only in
+  Supabase's Edge Function secrets. Source links are limited to `https://` URLs. A household member could save an
+  insight text of their own via the RPC; it is always shown with their name.
 - **Owner-only (admin) actions:** create/cancel invite links, change roles, remove people, add/rename/reorder/delete categories,
+  edit/delete expenses, approve/reject change requests,
   rename the household, and close/reopen months. Each goes through a `security definer` RPC or an RLS policy
   that checks the caller is the Owner, so the database itself enforces it, not just the UI.
 - Invite links carry a 64-hex-character random token. They work **once**, expire after **7 days**, and can be

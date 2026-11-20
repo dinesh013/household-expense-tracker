@@ -123,3 +123,38 @@ export interface InviteInfo {
 }
 
 export const ROLE_LABEL: Record<Role, string> = { owner: 'Owner', member: 'Member', viewer: 'Viewer' };
+
+/** A Member's request to change or delete an expense; the Owner approves (applies it) or rejects. */
+export interface ChangeRequest {
+  id: string;
+  household_id: string;
+  expense_id: string;
+  kind: 'edit' | 'delete';
+  changes: Partial<ExpenseSnapshot>;
+  expense_snapshot: ExpenseSnapshot;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  requested_by: string;
+  requested_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+}
+
+export interface InsightContent {
+  category: string;
+  headline: string;
+  tips: string[];
+  funny: string;
+  benchmark_note: string;
+  sources: { title: string; url: string }[];
+}
+
+export interface AiInsight {
+  id: string;
+  year: number;
+  month: number;
+  content: InsightContent;
+  created_by: string;
+  created_at: string;
+}

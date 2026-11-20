@@ -8,6 +8,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
+// Shared with the real Edge Function (Node strips the TypeScript types).
+import { dataRange, summarise, validateInsight } from '../supabase/functions/ai-insight/insight.ts';
 
 const PORT = Number(process.env.FAKE_SUPABASE_PORT || 54329);
 const SEED_PASSWORD = 'local-demo-only';
@@ -75,7 +77,10 @@ async function seed() {
   await add(arun, 17000, 'Rent', 'Rent', `${prev}-01`);
   await add(priya, 5200, 'Monthly groceries', 'Groceries', `${prev}-12`);
   await add(priya, 1500, 'Plumber', 'Maintenance & Repairs', `${prev}-20`);
-  await asUser(priya, () => db.query("update public.expenses set amount = 2450.50, note = 'Includes fruit' where description = 'Big basket order'"));
+  // Only the Owner edits; a Member asks for changes.
+  await asUser(arun, () => db.query("update public.expenses set amount = 2450.50, note = 'Includes fruit' where description = 'Big basket order'"));
+  await asUser(priya, () => db.query(
+    `select public.request_expense_change(id, 'edit', '{"amount": 620}'::jsonb, 'The bill was 620, I typed 640') from public.expenses where description = 'Dinner takeaway'`));
   await asUser(arun, () => db.query('select public.close_month($1, $2, $3)', [hid, Number(prev.slice(0, 4)), Number(prev.slice(5))]));
 }
 let newbieToken;
@@ -222,6 +227,45 @@ async function rest(req, user, url, body) {
   return { status: 200, json: rows };
 }
 
+// ---------- Edge Function stand-in: same contract as supabase/functions/ai-insight, canned text instead of Claude ----------
+// FAKE_AI=off makes it answer like a project without ANTHROPIC_API_KEY.
+async function aiInsight(user, body) {
+  if (process.env.FAKE_AI === 'off') return { status: 503, json: { code: 'not_configured', message: "AI Insight isn't switched on yet. The Owner needs to add an Anthropic API key." } };
+  if (!user) return { status: 401, json: { code: 'auth', message: 'Please sign in again.' } };
+  const { household_id: hid, year, month } = body ?? {};
+  const ym = { year: Number(year), month: Number(month) };
+  return asUser(user, async () => {
+    let id;
+    try {
+      id = (await db.query('select public.claim_ai_insight($1, $2, $3) as id', [hid, ym.year, ym.month])).rows[0].id;
+    } catch (e) {
+      const limit = /AI Insights/.test(e.message);
+      return { status: limit ? 429 : 403, json: { code: limit ? 'limit' : 'forbidden', message: limit ? e.message : 'You are not a member of this household.' } };
+    }
+    const { from, to } = dataRange(ym);
+    const cats = (await db.query('select id, name from public.categories where household_id = $1 order by sort_order', [hid])).rows;
+    const exps = (await db.query('select amount, category_id, expense_date from public.expenses where household_id = $1 and expense_date >= $2 and expense_date < $3', [hid, from, to])).rows;
+    const people = (await db.query("select count(*)::int as n from public.household_members where household_id = $1 and role in ('owner','member') and removed_at is null", [hid])).rows[0].n;
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    const input = summarise(exps, cats, ym, people, today);
+    const top = input.categories.find((c) => c.name !== 'Rent' && c.this_month > 0);
+    if (!top) {
+      const message = 'Add a few expenses for this month first.';
+      await db.query('select public.complete_ai_insight($1, null, $2)', [id, message]);
+      return { status: 502, json: { code: 'failed', message } };
+    }
+    const content = validateInsight({
+      category: top.name,
+      headline: `${top.name} is running about 20% above a typical Velachery household (offline sample).`,
+      tips: ['Set a weekly cap and check it every Sunday.', 'Buy staples in bulk at the local market.'],
+      funny: `At this rate, the ${top.name.toLowerCase()} shop in Velachery will name a counter after you.`,
+      benchmark_note: 'Offline sample text: the real function looks up current Chennai figures.',
+    }, [{ title: 'Sample source', url: 'https://example.com/chennai-household-costs' }]);
+    await db.query('select public.complete_ai_insight($1, $2, null)', [id, JSON.stringify(content)]);
+    return { status: 200, json: { id, content } };
+  });
+}
+
 async function auth(req, url, body) {
   const p = url.pathname.replace(/^\/auth\/v1\//, '');
   if (p === 'token' && url.searchParams.get('grant_type') === 'password') {
@@ -269,6 +313,7 @@ http.createServer((req, res) => {
       const body = raw ? JSON.parse(raw) : undefined;
       if (url.pathname.startsWith('/auth/v1/')) out = await auth(req, url, body);
       else if (url.pathname.startsWith('/rest/v1/')) out = await rest(req, userFromAuth(req), url, body);
+      else if (url.pathname === '/functions/v1/ai-insight') out = await aiInsight(userFromAuth(req), body);
       else out = { status: 404, json: { message: 'not found' } };
     } catch (e) {
       const status = e.status || (e.code === '42501' ? 403 : 400);

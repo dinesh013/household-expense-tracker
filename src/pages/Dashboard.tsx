@@ -8,6 +8,8 @@ import type { Expense, MonthSummary, Payment } from '../lib/types';
 import { isSettled } from '../lib/settlement';
 import { categoryColour, EmptyState, Icon, MonthSwitcher, Spinner, StatusBadge, initials } from '../components/ui';
 import { CategoryDonut, TransferLine, type Slice } from '../components/charts';
+import { AiInsightCard } from '../components/AiInsightCard';
+import { supabase } from '../lib/supabase';
 
 export default function Dashboard() {
   const app = useApp();
@@ -22,6 +24,7 @@ export default function Dashboard() {
     if (hasUnknownPeople(members, expenses)) revalidate();
   }, [members, expenses, revalidate]);
 
+  const pendingRequests = usePendingRequests(app.isOwner ? app.household!.id : null);
   const locked = summary?.status === 'closed';
   const newHref = summary && !summary.is_current ? `/expenses/new?date=${lastDayOf(ym)}` : '/expenses/new';
 
@@ -29,11 +32,17 @@ export default function Dashboard() {
     <>
       <MonthSwitcher value={ym} basePath="/" badge={summary && <StatusBadge status={summary.status} isCurrent={summary.is_current} />} />
       {error && <div className="alert error" role="alert">{error}</div>}
+      {pendingRequests > 0 && (
+        <Link to="/settings/activity" className="alert warn banner-link">
+          {pendingRequests === 1 ? '1 change request is' : `${pendingRequests} change requests are`} waiting for you. Review →
+        </Link>
+      )}
       {loading || !summary ? <Spinner /> : (
         <>
           <SummaryCards summary={summary} />
           <SettlementCard summary={summary} ymKey={monthKey(ym)} />
           {expenses.length > 0 && <BreakdownCard expenses={expenses} />}
+          {expenses.length > 0 && <AiInsightCard ym={ym} />}
           <ExpenseList expenses={expenses} monthName={monthLabel(ym)} isCurrent={summary.is_current} canAdd={app.canWrite && !locked} />
         </>
       )}
@@ -48,6 +57,19 @@ export default function Dashboard() {
       )}
     </>
   );
+}
+
+/** How many change requests wait for the Owner (0 for everyone else). */
+function usePendingRequests(householdId: string | null) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!householdId) return;
+    let cancelled = false;
+    supabase.from('change_requests').select('id').eq('household_id', householdId).eq('status', 'pending')
+      .then(({ data }) => { if (!cancelled) setN(data?.length ?? 0); });
+    return () => { cancelled = true; };
+  }, [householdId]);
+  return n;
 }
 
 function lastDayOf(ym: { year: number; month: number }) {

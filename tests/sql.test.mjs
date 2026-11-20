@@ -238,12 +238,12 @@ await check('odd paisa goes to one person and balances sum to zero', async () =>
   eq(s.people.reduce((a, p) => a + p.share_paise, 0), 133335, 'share sum');
 });
 await check('edits are recorded in history; household and logged_by immutable', async () => {
-  await as(priya);
+  await as(arun); // only the Owner edits (since 0007)
   const e = (await db.query("update public.expenses set amount = 1200, note = 'revised' where description = 'Rent share' returning *")).rows[0];
   eq(e.logged_by, arun.id, 'logged_by kept');
   const h = (await db.query("select action, changed_by, changes from public.expense_history where expense_id = $1 order by changed_at", [e.id])).rows;
   eq(h.map((x) => x.action), ['created', 'updated'], 'history actions');
-  eq(h[1].changed_by, priya.id, 'changed_by');
+  eq(h[1].changed_by, arun.id, 'changed_by');
   eq(h[1].changes.amount, { from: 1000, to: 1200 }, 'amount diff');
   eq(h[1].changes.note, { from: null, to: 'revised' }, 'note diff');
   await db.query("update public.expenses set amount = 1000, note = null where id = $1", [e.id]);
@@ -275,11 +275,12 @@ await check('only the owner closes, and only months that have ended', async () =
   eq(c, { status: 'closed', closed_by: arun.id }, 'closure');
 });
 await check('closed month locks its expenses', async () => {
-  await as(priya);
+  await as(arun);
   await expectError(() => db.query("update public.expenses set amount = 600 where description = 'Last month gas'"), /closed/);
   await expectError(() => db.query("delete from public.expenses where description = 'Last month gas'"), /closed/);
-  await expectError(() => insertExpense('10', 'Late entry', priya.id, prevDate), /closed/);
   await expectError(() => db.query("update public.expenses set expense_date = $1 where description = 'Vegetables'", [prevDate]), /closed/);
+  await as(priya);
+  await expectError(() => insertExpense('10', 'Late entry', priya.id, prevDate), /closed/);
 });
 await check('closed month shows final settlement with payment rows', async () => {
   await as(vik);
@@ -310,9 +311,7 @@ await check('reopen keeps Paid marks; re-close carries them to the new figures',
   let s = await rpc('get_month_summary', hid, prevY, prevM);
   eq(s.status, 'reopened', 'reopened');
   eq([s.payments.length, s.payments[0].paid_on, s.payments[0].paid_amount_paise], [1, today, 25000], 'mark kept while reopened');
-  await as(priya);
   await db.query("update public.expenses set amount = 600 where description = 'Last month gas'");
-  await as(arun);
   await rpc('close_month', hid, prevY, prevM);
   s = await rpc('get_month_summary', hid, prevY, prevM);
   eq([s.status, s.total_paise], ['closed', 60000], 'recalculated');
@@ -324,9 +323,7 @@ await check('reopen keeps Paid marks; re-close carries them to the new figures',
 await check('a paid payment that is no longer owed stays visible with amount 0', async () => {
   await as(arun);
   await rpc('reopen_month', hid, prevY, prevM);
-  await as(priya);
   await db.query("update public.expenses set paid_by = $1 where description = 'Last month gas'", [arun.id]);
-  await as(arun);
   await rpc('close_month', hid, prevY, prevM);
   const s = await rpc('get_month_summary', hid, prevY, prevM);
   eq(s.payments.map((p) => [p.from, p.to, p.amount_paise, p.paid_amount_paise]).sort(),
@@ -334,9 +331,7 @@ await check('a paid payment that is no longer owed stays visible with amount 0',
   const zero = s.payments.find((p) => p.amount_paise === 0);
   await expectError(() => rpc('mark_payment', zero.id, today), /Nothing is owed/);
   await rpc('reopen_month', hid, prevY, prevM);
-  await as(priya);
   await db.query("update public.expenses set paid_by = $1 where description = 'Last month gas'", [priya.id]);
-  await as(arun);
   await rpc('close_month', hid, prevY, prevM);
   eq((await rpc('get_month_summary', hid, prevY, prevM)).payments.map((p) => [p.amount_paise, p.paid_amount_paise]),
     [[30000, 30000]], 'back to one fully paid row');
@@ -517,6 +512,115 @@ await check('migration backfills snapshots of older entries as they were at the 
   await db.query('update public.expense_history set snapshot = null where expense_id = $1', [exp.id]);
   await db.exec(readFileSync(join(migDir, '20261119000006_activity_log.sql'), 'utf8')); // re-runnable
   eq((await log(exp.id)).map((r) => r.snapshot), expected, 'backfilled snapshots match');
+});
+
+console.log('\nMembers add only; change requests');
+const late = { id: '55555555-5555-5555-5555-555555555555', email: 'late@example.com' }; // an active Member (joined above)
+const request = (expenseId, kind, changes, reason) =>
+  rpc('request_expense_change', expenseId, kind, JSON.stringify(changes), reason);
+const crStatus = async (id) => (await one('select status, decided_by, decision_note from public.change_requests where id = $1', [id]));
+
+await check('a Member can add expenses but not edit or delete them; the Owner can', async () => {
+  await as(late);
+  const exp = (await insertExpense('60.00', 'Snacks', late.id)).rows[0];
+  eq((await db.query('update public.expenses set amount = 70 where id = $1', [exp.id])).affectedRows, 0, 'member edit changes nothing');
+  eq((await db.query('delete from public.expenses where id = $1', [exp.id])).affectedRows, 0, 'member delete changes nothing');
+  eq(Number((await one('select amount from public.expenses where id = $1', [exp.id])).amount), 60, 'unchanged');
+  await as(arun);
+  eq((await db.query('update public.expenses set amount = 65 where id = $1', [exp.id])).affectedRows, 1, 'owner edits');
+});
+
+await check('change requests are validated when raised', async () => {
+  await as(late);
+  const exp = (await insertExpense('90.00', 'Fruits', late.id)).rows[0];
+  await expectError(() => request(exp.id, 'edit', { amount: 90 }, 'typo'), /Nothing to change/);
+  await expectError(() => request(exp.id, 'edit', { amount: -5 }, 'typo'), /amount between/);
+  await expectError(() => request(exp.id, 'edit', { expense_date: tomorrow }, 'typo'), /future/);
+  await expectError(() => request(exp.id, 'edit', { logged_by: late.id }, 'typo'), /Unknown field/);
+  await expectError(() => request(exp.id, 'edit', { amount: 95 }, '  '), /short reason/);
+  const id = await request(exp.id, 'edit', { amount: '95', description: 'Fruits', note: '' }, 'Typed 90 by mistake');
+  const cr = await one('select kind, changes, expense_snapshot, requested_by, status from public.change_requests where id = $1', [id]);
+  eq(cr.changes, { amount: 95 }, 'only real changes kept');
+  eq([cr.kind, cr.requested_by, cr.status, cr.expense_snapshot.amount], ['edit', late.id, 'pending', 90], 'request row');
+  await expectError(() => request(exp.id, 'delete', {}, 'again'), /already a pending request/);
+  await as(vik);
+  await expectError(() => request(exp.id, 'delete', {}, 'viewer'), /not found/);
+  await as(outsider);
+  await expectError(() => request(exp.id, 'delete', {}, 'outsider'), /not found/);
+  eq((await one('select count(*)::int as n from public.change_requests')).n, 0, 'outsider sees no requests');
+  await expectError(() => db.query("insert into public.change_requests (household_id, expense_id, kind, expense_snapshot, reason, requested_by) values ($1, gen_random_uuid(), 'delete', '{}', 'x', $2)", [hid, outsider.id]), /permission denied/);
+});
+
+await check('only the Owner decides; approving applies the edit and logs it', async () => {
+  await as(late);
+  const exp = (await insertExpense('200.00', 'Water cans', late.id)).rows[0];
+  const id = await request(exp.id, 'edit', { amount: 240, note: 'two extra cans' }, 'Forgot two cans');
+  await expectError(() => rpc('decide_change_request', id, true, null), /Only the Owner/);
+  await as(arun);
+  await rpc('decide_change_request', id, true, null);
+  const e = await one('select amount, note, logged_by from public.expenses where id = $1', [exp.id]);
+  eq([Number(e.amount), e.note, e.logged_by], [240, 'two extra cans', late.id], 'applied, logged_by kept');
+  eq((await crStatus(id)).status, 'approved', 'approved');
+  const h = await one("select changed_by, changes from public.expense_history where expense_id = $1 and action = 'updated'", [exp.id]);
+  eq([h.changed_by, h.changes.amount], [arun.id, { from: 200, to: 240 }], 'activity log shows the Owner applying it');
+  await expectError(() => rpc('decide_change_request', id, false, 'late'), /already been approved/);
+});
+
+await check('delete requests, rejections and cancelling', async () => {
+  await as(late);
+  const a = (await insertExpense('15.00', 'Duplicate tea', late.id)).rows[0];
+  const b = (await insertExpense('25.00', 'Coffee', late.id)).rows[0];
+  const c = (await insertExpense('35.00', 'Juice', late.id)).rows[0];
+  const delId = await request(a.id, 'delete', {}, 'Added twice');
+  const rejId = await request(b.id, 'delete', {}, 'Not shared');
+  const canId = await request(c.id, 'edit', { amount: 30 }, 'Price was 30');
+  await as(arun);
+  await rpc('decide_change_request', delId, true, null);
+  assert(!(await one('select id from public.expenses where id = $1', [a.id])), 'expense deleted');
+  eq((await one("select changed_by from public.expense_history where expense_id = $1 and action = 'deleted'", [a.id])).changed_by, arun.id, 'delete logged as the Owner');
+  await expectError(() => rpc('decide_change_request', rejId, false, ' '), /reason for rejecting/);
+  await rpc('decide_change_request', rejId, false, 'It is shared, we both drank it');
+  eq((await crStatus(rejId)).decision_note, 'It is shared, we both drank it', 'rejection reason kept');
+  assert(await one('select id from public.expenses where id = $1', [b.id]), 'rejected: expense kept');
+  await expectError(() => rpc('cancel_change_request', canId), /can no longer be cancelled/);
+  await as(late);
+  await rpc('cancel_change_request', canId);
+  eq((await crStatus(canId)).status, 'cancelled', 'requester cancelled');
+  eq(Number((await one('select amount from public.expenses where id = $1', [c.id])).amount), 35, 'cancelled: unchanged');
+});
+
+await check('approving a change in a closed month is refused and the request stays pending', async () => {
+  await as(late);
+  const locked = await one('select id from public.expenses where household_id = $1 and public.is_month_locked(household_id, expense_date) limit 1', [hid]);
+  const id = await request(locked.id, 'delete', {}, 'Wrong month');
+  await as(arun);
+  await expectError(() => rpc('decide_change_request', id, true, null), /closed/);
+  eq((await crStatus(id)).status, 'pending', 'still pending');
+  assert(await one('select id from public.expenses where id = $1', [locked.id]), 'expense kept');
+  await rpc('decide_change_request', id, false, 'Month is closed');
+});
+
+console.log('\nAI Insight limits');
+await check('5 insights a day per household; failures don\'t count; only the creator saves', async () => {
+  await service();
+  await db.query('delete from public.ai_insights');
+  await as(vik); // Viewers can generate too
+  const ids = [];
+  for (let i = 0; i < 5; i++) ids.push(await rpc('claim_ai_insight', hid, ty, tm));
+  await expectError(() => rpc('claim_ai_insight', hid, ty, tm), /today's 5 AI Insights/);
+  await as(late);
+  await expectError(() => rpc('complete_ai_insight', ids[0], JSON.stringify({ headline: 'x' }), null), /can no longer be saved/);
+  await as(vik);
+  await rpc('complete_ai_insight', ids[0], null, 'API error');
+  const again = await rpc('claim_ai_insight', hid, ty, tm);
+  await rpc('complete_ai_insight', again, JSON.stringify({ headline: 'Groceries are up' }), null);
+  await expectError(() => rpc('complete_ai_insight', again, JSON.stringify({ headline: 'twice' }), null), /can no longer be saved/);
+  await expectError(() => rpc('complete_ai_insight', ids[1], JSON.stringify({ big: 'x'.repeat(5000) }), null), /too long/);
+  eq((await one("select content from public.ai_insights where id = $1", [again])).content, { headline: 'Groceries are up' }, 'saved');
+  await as(outsider);
+  await expectError(() => rpc('claim_ai_insight', hid, ty, tm), /not a member/);
+  eq((await one('select count(*)::int as n from public.ai_insights')).n, 0, 'outsider reads nothing');
+  eq(await rpc('ai_insights_used_today', hid), 0, 'outsider gets no count');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
